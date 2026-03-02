@@ -32,11 +32,37 @@ impl Block {
     /// Encode the internal data to the data layout illustrated in the course
     /// Note: You may want to recheck if any of the expected field is missing from your output
     pub fn encode(&self) -> Bytes {
-        unimplemented!()
+        let mut buffer = Vec::with_capacity(self.data.len() + self.offsets.len() * 2 + 2);
+
+        buffer.extend_from_slice(&self.data);
+
+        for offset in &self.offsets {
+            buffer.extend_from_slice(&offset.to_le_bytes())
+        }
+
+        buffer.extend_from_slice(&(self.offsets.len() as u16).to_le_bytes());
+
+        Bytes::from(buffer)
     }
 
     /// Decode from the data layout, transform the input `data` to a single `Block`
     pub fn decode(data: &[u8]) -> Self {
-        unimplemented!()
+        let num_of_elements_start = &data[data.len() - 2..];
+        let num_of_elements =
+            u16::from_le_bytes([num_of_elements_start[0], num_of_elements_start[1]]);
+
+        let offset_start = data.len() - ((num_of_elements * 2) as usize) - 2;
+        let mut offsets = Vec::with_capacity(num_of_elements as usize);
+
+        for i in 0..num_of_elements {
+            let pos = offset_start + ((i * 2) as usize);
+            offsets.push(u16::from_le_bytes([data[pos], data[pos + 1]]));
+        }
+
+        let data_ = data[0..offset_start].to_vec();
+        Self {
+            data: data_,
+            offsets,
+        }
     }
 }
