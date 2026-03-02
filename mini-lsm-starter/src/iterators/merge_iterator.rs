@@ -15,12 +15,12 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
+use crate::key::KeySlice;
+use anyhow::Result;
+use nom::complete::bool;
 use std::cmp::{self};
 use std::collections::BinaryHeap;
-
-use anyhow::Result;
-
-use crate::key::KeySlice;
+use std::collections::binary_heap::PeekMut;
 
 use super::StorageIterator;
 
@@ -59,7 +59,33 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
-        unimplemented!()
+        // 1. 穿了一个空的
+        if iters.is_empty() {
+            return Self {
+                iters: BinaryHeap::new(),
+                current: None,
+            };
+        }
+        let mut heap = BinaryHeap::new();
+
+        // 2. 所有都无效
+        if iters.iter().all(|iter| !iter.is_valid()) {
+            let mut iters = iters;
+            return Self {
+                iters: heap,
+                current: Some(HeapWrapper(0, iters.pop().unwrap())),
+            };
+        }
+        for (index, iter) in iters.into_iter().enumerate() {
+            if iter.is_valid() {
+                heap.push(HeapWrapper(index, iter));
+            }
+        }
+        let current = heap.pop().unwrap();
+        Self {
+            iters: heap,
+            current: Some(current),
+        }
     }
 }
 
@@ -69,18 +95,59 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        self.current.as_ref().unwrap().1.key()
     }
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        self.current.as_ref().unwrap().1.value()
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.current
+            .as_ref()
+            .map(|x| x.1.is_valid())
+            .unwrap_or(false)
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let mut current = self.current.as_mut().unwrap();
+
+        // 1. 比对堆里面key和current key相同的迭代器，让他们往后
+        while let Some(mut peek) = self.iters.peek_mut() {
+            if peek.1.key() == current.1.key() {
+                // 直接在当前这个迭代器向后走一步
+                if let e @ Err(_) = peek.1.next() {
+                    PeekMut::pop(peek);
+                    return e;
+                }
+                // 检查是否有效
+                if !peek.1.is_valid() {
+                    PeekMut::pop(peek);
+                }
+            } else {
+                // 如果遇到不相同的key就退出
+                break;
+            }
+        }
+
+        // 2. 看current的变化
+        current.1.next()?;
+
+        // 3. 看current是否还有效
+        if !current.1.is_valid() {
+            if let Some(peek) = self.iters.pop() {
+                *current = peek;
+            }
+            return Ok(());
+        }
+
+        // 4. 看是否current的key是最小的
+        if let Some(mut peek) = self.iters.peek_mut() {
+            if *peek > *current {
+                std::mem::swap(&mut *peek, current);
+            }
+        }
+
+        Ok(())
     }
 }
